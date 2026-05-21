@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Desi Rush - Endless Runner</title>
+    <style>
+        body {
+            margin: 0;
+            background: #111;
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+        h1 {
+            margin: 5px 0;
+            color: #ff9933;
+            text-shadow: 2px 2px #138808;
+        }
+        #gameContainer {
+            position: relative;
+            box-shadow: 0 0 20px rgba(255,153,51,0.5);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        canvas {
+            background: #333;
+            display: block;
+        }
+        .ui-layer {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            right: 10px;
+            display: flex;
+            justify-content: space-between;
+            font-size: 20px;
+            font-weight: bold;
+            pointer-events: none;
+            text-shadow: 2px 2px 4px #000;
+        }
+        #gameOverScreen {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            display: none;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 18px;
+            background: #ff9933;
+            border: none;
+            color: white;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: 0.2s;
+        }
+        button:hover { background: #138808; }
+    </style>
+</head>
+<body>
+
+    <h1>DESI RUSH</h1>
+    <div id="gameContainer">
+        <div class="ui-layer">
+            <div id="scoreBox">Score: 0</div>
+            <div id="coinBox" style="color: #ffd700;">🪙 Coins: 0</div>
+        </div>
+        <canvas id="gameCanvas" width="800" height="450"></canvas>
+        <div id="gameOverScreen">
+            <h2 style="color: #ff3333; font-size: 40px; margin-bottom: 10px;">CAUGHT BY POLICE!</h2>
+            <p id="finalScore" style="font-size: 20px; margin-bottom: 20px;"></p>
+            <button onclick="resetGame()">Run Again!</button>
+        </div>
+    </div>
+
+<script>
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+// Game State Variables
+let gameSpeed = 5;
+let score = 0;
+let coins = 0;
+let isGameOver = false;
+let gameFrame = 0;
+
+// Lanes layout (Left, Center, Right)
+const lanes = [150, 400, 650]; 
+
+// --- GAME OBJECTS ---
+
+// 1. The Player (Young Indian Boy in Blue Hoodie)
+const player = {
+    targetLane: 1, // Start in center lane
+    x: lanes[1],
+    y: 330,
+    width: 50,
+    height: 80,
+    jumpY: 0,
+    isJumping: false,
+    jumpVelocity: 0,
+    color: "#0077ff", // Blue hoodie representation
+    
+    update() {
+        // Smooth lane shifting math
+        let targetX = lanes[this.targetLane] - this.width / 2;
+        this.x += (targetX - this.x) * 0.2;
+
+        // Jump physics
+        if (this.isJumping) {
+            this.jumpVelocity -= 0.6; // Gravity
+            this.jumpY += this.jumpVelocity;
+            if (this.jumpY <= 0) {
+                this.jumpY = 0;
+                this.isJumping = false;
+            }
+        }
+    },
+    draw() {
+        ctx.save();
+        ctx.translate(this.x, this.y - this.jumpY);
+        
+        // Draw Boy (Stylized shapes instead of images for plug-and-play simplicity)
+        ctx.fillStyle = "#0088cc"; // Blue Hoodie
+        ctx.fillRect(0, 20, this.width, 40);
+        ctx.fillStyle = "#ffdbac"; // Head
+        ctx.beginPath(); ctx.arc(this.width/2, 10, 15, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = "#222"; // Hair
+        ctx.fillRect(this.width/2 - 15, -5, 30, 10);
+        ctx.fillStyle = "#225599"; // Ripped Jeans
+        ctx.fillRect(5, 60, 15, 20); ctx.fillRect(30, 60, 15, 20);
+        
+        ctx.restore();
+    }
+};
+
+// 2. The Chasing Police Officer (Always slightly behind the player)
+const police = {
+    x: lanes[1],
+    y: 350,
+    targetLane: 1,
+    draw() {
+        // Follow player lane with a slight lag
+        this.targetLane = player.targetLane;
+        let targetX = lanes[this.targetLane] - 30;
+        this.x += (targetX - this.x) * 0.05; // Slower tracking makes it look dynamic
+
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        // Draw Khaki Police Uniform
+        ctx.fillStyle = "#c3b091"; // Khaki
+        ctx.fillRect(0, 15, 60, 50);
+        ctx.fillStyle = "#ffdbac"; // Face
+        ctx.beginPath(); ctx.arc(30, 5, 15, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = "#654321"; // Police Cap
+        ctx.fillRect(12, -15, 36, 10);
+        // Lathi (Baton)
+        ctx.strokeStyle = "#8b5a2b"; ctx.lineWidth = 6;
+        ctx.beginPath(); ctx.moveTo(55, 10); ctx.lineTo(70, -15); ctx.stroke();
+        ctx.restore();
+    }
+};
+
+// Spawn Lists
+let obstacles = [];
+let spawnableCoins = [];
+
+// --- CLASSES FOR SPAWNABLES ---
+
+class Obstacle {
+    constructor() {
+        this.lane = Math.floor(Math.random() * 3);
+        this.x = lanes[this.lane];
+        this.y = -100;
+        this.type = Math.random() > 0.5 ? 'cow' : 'rickshaw';
+        this.width = this.type === 'cow' ? 80 : 70;
+        this.height = this.type === 'cow' ? 60 : 90;
+        this.passed = false;
+    }
+    update() {
+        this.y += gameSpeed;
+    }
+    draw() {
+        ctx.save();
+        ctx.translate(this.x - this.width/2, this.y);
+        if (this.type === 'cow') {
+            // Draw Holy Cow
+            ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 20, this.width, this.height - 20);
+            ctx.fillStyle = "#ffcc00"; ctx.fillRect(10, 10, 15, 15); // Horns/Decorations
+            ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.arc(15,30, 15, 0, Math.PI*2); ctx.fill(); // Head
+        } else {
+            // Draw Auto-Rickshaw (Green and yellow)
+            ctx.fillStyle = "#138808"; ctx.fillRect(0, 30, this.width, this.height - 30); // Green bottom
+            ctx.fillStyle = "#ff9933"; ctx.fillRect(0, 0, this.width, 30); // Yellow top
+            ctx.fillStyle = "#000"; ctx.fillRect(10, 25, this.width - 20, 20); // Windshield
+        }
+        ctx.restore();
+    }
+}
+
+class Coin {
+    constructor(lane, yOffset) {
+        this.lane = lane;
+        this.x = lanes[this.lane];
+        this.y = yOffset;
+        this.radius = 12;
+    }
+    update() {
+        this.y += gameSpeed;
+    }
+    draw() {
+        ctx.save();
+        // Shiny gold star coin representation
+        ctx.fillStyle = "#ffd700";
+        ctx.strokeStyle = "#ff9900";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius, 0, Math.PI*2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+    }
+}
+
+// --- GAME LOOP & LOGIC ---
+
+function spawnLogic() {
+    // Spawn Obstacles
+    if (gameFrame % 120 === 0) {
+        obstacles.push(new Obstacle());
+    }
+    // Spawn Chains of Coins
+    if (gameFrame % 90 === 0) {
+        let coinLane = Math.floor(Math.random() * 3);
+        for(let i = 0; i < 4; i++) {
+            spawnableCoins.push(new Coin(coinLane, -40 - (i * 35)));
+        }
+    }
+}
+
+function handleCollisions() {
+    // Obstacle Collision
+    obstacles.forEach(obs => {
+        let obsLeft = obs.x - obs.width/2;
+        let obsRight = obs.x + obs.width/2;
+        
+        let pLeft = player.x;
+        let pRight = player.x + player.width;
+        
+        // AABB Collision bounds checking
+        if (pLeft < obsRight && pRight > obsLeft && 
+            player.y < obs.y + obs.height && player.y + player.height > obs.y) {
+            
+            // Special rule: You can jump over the Cow, but not the tall Rickshaw!
+            if (obs.type === 'cow' && player.jumpY > 30) {
+                // Safely jumped over!
+            } else {
+                gameOver();
+            }
+        }
+    });
+
+    // Coin Collection
+    spawnableCoins.forEach((coin, index) => {
+        let distY = Math.abs(coin.y - (player.y + player.height/2 - player.jumpY));
+        if (player.targetLane === coin.lane && distY < 40) {
+            coins++;
+            score += 50;
+            document.getElementById("coinBox").innerText = `🪙 Coins: ${coins}`;
+            spawnableCoins.splice(index, 1);
+        }
+    });
+}
+
+function drawBackground() {
+    // Ground / Street
+    ctx.fillStyle = "#555";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    // Lane lines
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 5;
+    ctx.setLineDash([20, 20]);
+    ctx.beginPath();
+    ctx.moveTo(275, 0); ctx.lineTo(275, canvas.height);
+    ctx.moveTo(525, 0); ctx.lineTo(525, canvas.height);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Decorative Environment Context (Chai Tapri on Right, Shop Text area on Left)
+    ctx.fillStyle = "#8b5a2b"; 
+    ctx.fillRect(720, 200, 80, 150); // Chai Stall structure
+    ctx.fillStyle = "#ff9933"; ctx.font = "14px Arial";
+    ctx.fillText("CHAI TAPRI", 725, 220);
+
+    ctx.fillStyle = "#990000"; ctx.fillRect(0, 100, 80, 120); // Left Shop
+    ctx.fillStyle = "#fff"; ctx.font = "bold 16px Arial";
+    ctx.fillText("राजू स्टोर", 10, 130); // Hindi Shop Sign placeholder
+}
+
+function updateGame() {
+    if (isGameOver) return;
+
+    gameFrame++;
+    score += 1; // Passive score generation
+    document.getElementById("scoreBox").innerText = `Score: ${score}`;
+    
+    // Gradually speed up the game
+    if (gameFrame % 500 === 0) gameSpeed += 0.5;
+
+    ctx.clearRect(0,0, canvas.width, canvas.height);
+
+    drawBackground();
+    spawnLogic();
+
+    // Update & Draw Obstacles
+    obstacles.forEach((obs, index) => {
+        obs.update();
+        obs.draw();
+        if (obs.y > canvas.height) obstacles.splice(index, 1);
+    });
+
+    // Update & Draw Coins
+    spawnableCoins.forEach((coin, index) => {
+        coin.update();
+        coin.draw();
+        if (coin.y > canvas.height) spawnableCoins.splice(index, 1);
+    });
+
+    // Handle character physics
+    player.update();
+    player.draw();
+    police.draw();
+
+    handleCollisions();
+
+    requestAnimationFrame(updateGame);
+}
+
+function gameOver() {
+    isGameOver = true;
+    document.getElementById("gameOverScreen").style.display = "flex";
+    document.getElementById("finalScore").innerText = `You ran away with ${coins} coins and a score of ${score}!`;
+}
+
+function resetGame() {
+    obstacles = [];
+    spawnableCoins = [];
+    score = 0;
+    coins = 0;
+    gameSpeed = 5;
+    gameFrame = 0;
+    player.targetLane = 1;
+    player.x = lanes[1] - player.width/2;
+    isGameOver = false;
+    document.getElementById("coinBox").innerText = `🪙 Coins: 0`;
+    document.getElementById("gameOverScreen").style.display = "none";
+    updateGame();
+}
+
+// --- INPUT HANDLERS ---
+window.addEventListener("keydown", (e) => {
+    if (isGameOver) return;
+    
+    if ((e.key === "ArrowLeft" || e.key.toLowerCase() === "a") && player.targetLane > 0) {
+        player.targetLane--;
+    }
+    if ((e.key === "ArrowRight" || e.key.toLowerCase() === "d") && player.targetLane < 2) {
+        player.targetLane++;
+    }
+    if ((e.key === "ArrowUp" || e.key.toLowerCase() === "w") && !player.isJumping) {
+        player.isJumping = true;
+        player.jumpVelocity = 12; // Start jump power
+    }
+});
+
+// Start the game loop on load
+updateGame();
+</script>
+</body>
+</html>
