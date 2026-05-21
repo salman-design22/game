@@ -3,390 +3,417 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Desi Rush - Endless Runner</title>
+    <title>Mumbai Rush 3D</title>
     <style>
         body {
             margin: 0;
-            background: #111;
-            color: white;
+            padding: 0;
+            overflow: hidden;
+            background-color: #000;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            min-height: 100vh;
-            overflow: hidden;
+            user-select: none;
         }
-        h1 {
-            margin: 5px 0;
-            color: #ff9933;
-            text-shadow: 2px 2px #138808;
-        }
-        #gameContainer {
-            position: relative;
-            box-shadow: 0 0 20px rgba(255,153,51,0.5);
-            border-radius: 10px;
-            overflow: hidden;
-        }
-        canvas {
-            background: #333;
-            display: block;
-        }
-        .ui-layer {
+        #ui-container {
             position: absolute;
-            top: 10px;
-            left: 10px;
-            right: 10px;
+            top: 20px;
+            left: 20px;
+            right: 20px;
             display: flex;
             justify-content: space-between;
-            font-size: 20px;
-            font-weight: bold;
             pointer-events: none;
-            text-shadow: 2px 2px 4px #000;
+            z-index: 10;
         }
-        #gameOverScreen {
+        .score-card {
+            background: rgba(0, 0, 0, 0.6);
+            padding: 10px 20px;
+            border-radius: 30px;
+            color: #fff;
+            font-size: 24px;
+            font-weight: bold;
+            border: 2px solid #ff9933;
+            box-shadow: 0 0 10px rgba(255,153,51,0.5);
+        }
+        #coin-card {
+            border-color: #ffd700;
+            box-shadow: 0 0 10px rgba(255,215,0,0.5);
+            color: #ffd700;
+        }
+        #game-over-screen {
             position: absolute;
             top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.8);
+            background: rgba(0, 0, 0, 0.85);
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
+            z-index: 20;
             display: none;
+            color: white;
         }
+        h1 {
+            color: #ff3333;
+            font-size: 48px;
+            margin-bottom: 10px;
+            text-shadow: 0 0 20px rgba(255,0,0,0.6);
+        }
+        p { font-size: 20px; margin-bottom: 30px; }
         button {
-            padding: 10px 20px;
-            font-size: 18px;
-            background: #ff9933;
+            padding: 15px 40px;
+            font-size: 22px;
+            background: linear-gradient(45deg, #ff9933, #138808);
             border: none;
             color: white;
             border-radius: 5px;
             cursor: pointer;
             font-weight: bold;
-            transition: 0.2s;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+            transition: transform 0.1s;
         }
-        button:hover { background: #138808; }
+        button:hover { transform: scale(1.05); }
     </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 <body>
 
-    <h1>DESI RUSH</h1>
-    <div id="gameContainer">
-        <div class="ui-layer">
-            <div id="scoreBox">Score: 0</div>
-            <div id="coinBox" style="color: #ffd700;">🪙 Coins: 0</div>
-        </div>
-        <canvas id="gameCanvas" width="800" height="450"></canvas>
-        <div id="gameOverScreen">
-            <h2 style="color: #ff3333; font-size: 40px; margin-bottom: 10px;">CAUGHT BY POLICE!</h2>
-            <p id="finalScore" style="font-size: 20px; margin-bottom: 20px;"></p>
-            <button onclick="resetGame()">Run Again!</button>
-        </div>
+    <div id="ui-container">
+        <div id="score-card" class="score-card">SCORE: 0</div>
+        <div id="coin-card" class="score-card">🪙 COINS: 0</div>
+    </div>
+
+    <div id="game-over-screen">
+        <h1>CAUGHT BY THE POLICE!</h1>
+        <p id="final-stats"></p>
+        <button onclick="resetGame()">RUN AGAIN</button>
     </div>
 
 <script>
-const canvas = document.getElementById("gameCanvas");
-const ctx = canvas.getContext("2d");
+// --- SYSTEM SETUPS ---
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87CEEB); // Sunny sky blue
+scene.fog = new THREE.FogExp2(0x87CEEB, 0.015);
 
-// Game State Variables
-let gameSpeed = 5;
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+// --- LIGHTING ---
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+scene.add(ambientLight);
+
+const dirLight = new THREE.DirectionalLight(0xfffaed, 0.8);
+dirLight.position.set(20, 40, 20);
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.width = 1000;
+dirLight.shadow.mapSize.height = 1000;
+scene.add(dirLight);
+
+// --- GAME STATE VARIABLES ---
+let gameSpeed = 0.8;
 let score = 0;
 let coins = 0;
 let isGameOver = false;
-let gameFrame = 0;
+const laneWidth = 4;
+const lanes = [-laneWidth, 0, laneWidth]; // Left, Center, Right X positions
 
-// Lanes layout (Left, Center, Right)
-const lanes = [150, 400, 650]; 
+let obstacles = [];
+let coinPickups = [];
+let backgroundScenery = [];
 
-// --- GAME OBJECTS ---
+// --- BUILD WORLD ROAD & ENVIRONMENT ---
+const roadGeometry = new THREE.PlaneGeometry(14, 1000);
+const roadMaterial = new THREE.MeshStandardMaterial({ color: 0x444444, roughness: 0.8 });
+const road = new THREE.Mesh(roadGeometry, roadMaterial);
+road.rotation.x = -Math.PI / 2;
+road.position.z = -450;
+road.receiveShadow = true;
+scene.add(road);
 
-// 1. The Player (Young Indian Boy in Blue Hoodie)
-const player = {
-    targetLane: 1, // Start in center lane
-    x: lanes[1],
-    y: 330,
-    width: 50,
-    height: 80,
-    jumpY: 0,
+// Create basic procedural city buildings/stalls along the side
+function createEnvironmentAsset(zPos) {
+    // Left side building (Shops)
+    const leftGeo = new THREE.BoxGeometry(4, 8, 12);
+    const leftMat = new THREE.MeshStandardMaterial({ color: 0x990000 }); // Red shop vibes
+    const leftBldg = new THREE.Mesh(leftGeo, leftMat);
+    leftBldg.position.set(-9, 4, zPos);
+    scene.add(leftBldg);
+    backgroundScenery.push(leftBldg);
+
+    // Right side asset (Chai Tapri representation)
+    const rightGeo = new THREE.BoxGeometry(3, 4, 6);
+    const rightMat = new THREE.MeshStandardMaterial({ color: 0x138808 }); // Green stall base
+    const chaiStall = new THREE.Mesh(rightGeo, rightMat);
+    chaiStall.position.set(9, 2, zPos + 3);
+    scene.add(chaiStall);
+    backgroundScenery.push(chaiStall);
+}
+// Generate continuous starter buildings
+for(let z = 0; z > -500; z -= 30) {
+    createEnvironmentAsset(z);
+}
+
+// --- CHARACTERS ---
+
+// 1. The Running Boy (Player Mesh Group)
+const playerGroup = new THREE.Group();
+// Head
+const headGeo = new THREE.SphereGeometry(0.4, 16, 16);
+const headMat = new THREE.MeshStandardMaterial({ color: 0xffdbac });
+const head = new THREE.Mesh(headGeo, headMat);
+head.position.y = 1.8;
+playerGroup.add(head);
+// Blue Hoodie Body
+const bodyGeo = new THREE.BoxGeometry(0.7, 1.0, 0.5);
+const bodyMat = new THREE.MeshStandardMaterial({ color: 0x0077ff });
+const body = new THREE.Mesh(bodyGeo, bodyMat);
+body.position.y = 1.0;
+playerGroup.add(body);
+// Ripped Jeans Legs
+const legGeo = new THREE.BoxGeometry(0.25, 0.6, 0.3);
+const legMat = new THREE.MeshStandardMaterial({ color: 0x225599 });
+const leftLeg = new THREE.Mesh(legGeo, legMat); leftLeg.position.set(-0.2, 0.3, 0);
+const rightLeg = new THREE.Mesh(legGeo, legMat); rightLeg.position.set(0.2, 0.3, 0);
+playerGroup.add(leftLeg, rightLeg);
+
+playerGroup.castShadow = true;
+scene.add(playerGroup);
+
+// Player internal tracking state
+const playerState = {
+    currentLane: 1,
+    targetX: lanes[1],
+    yPos: 0,
     isJumping: false,
     jumpVelocity: 0,
-    color: "#0077ff", // Blue hoodie representation
-    
-    update() {
-        // Smooth lane shifting math
-        let targetX = lanes[this.targetLane] - this.width / 2;
-        this.x += (targetX - this.x) * 0.2;
-
-        // Jump physics
-        if (this.isJumping) {
-            this.jumpVelocity -= 0.6; // Gravity
-            this.jumpY += this.jumpVelocity;
-            if (this.jumpY <= 0) {
-                this.jumpY = 0;
-                this.isJumping = false;
-            }
-        }
-    },
-    draw() {
-        ctx.save();
-        ctx.translate(this.x, this.y - this.jumpY);
-        
-        // Draw Boy (Stylized shapes instead of images for plug-and-play simplicity)
-        ctx.fillStyle = "#0088cc"; // Blue Hoodie
-        ctx.fillRect(0, 20, this.width, 40);
-        ctx.fillStyle = "#ffdbac"; // Head
-        ctx.beginPath(); ctx.arc(this.width/2, 10, 15, 0, Math.PI*2); ctx.fill();
-        ctx.fillStyle = "#222"; // Hair
-        ctx.fillRect(this.width/2 - 15, -5, 30, 10);
-        ctx.fillStyle = "#225599"; // Ripped Jeans
-        ctx.fillRect(5, 60, 15, 20); ctx.fillRect(30, 60, 15, 20);
-        
-        ctx.restore();
-    }
+    gravity: -0.015
 };
 
-// 2. The Chasing Police Officer (Always slightly behind the player)
-const police = {
-    x: lanes[1],
-    y: 350,
-    targetLane: 1,
-    draw() {
-        // Follow player lane with a slight lag
-        this.targetLane = player.targetLane;
-        let targetX = lanes[this.targetLane] - 30;
-        this.x += (targetX - this.x) * 0.05; // Slower tracking makes it look dynamic
+// 2. Chasing Cop (Always slightly behind the camera/player threshold)
+const copGroup = new THREE.Group();
+const copBodyGeo = new THREE.BoxGeometry(0.9, 1.1, 0.6);
+const copBodyMat = new THREE.MeshStandardMaterial({ color: 0xc3b091 }); // Khaki
+const copBody = new THREE.Mesh(copBodyGeo, copBodyMat);
+copBody.position.y = 1.0;
+copGroup.add(copBody);
+// Cop Cap
+const capGeo = new THREE.CylinderGeometry(0.5, 0.5, 0.2, 16);
+const capMat = new THREE.MeshStandardMaterial({ color: 0x654321 });
+const cap = new THREE.Mesh(capGeo, capMat);
+cap.position.y = 1.8;
+copGroup.add(cap);
 
-        ctx.save();
-        ctx.translate(this.x, this.y);
-        // Draw Khaki Police Uniform
-        ctx.fillStyle = "#c3b091"; // Khaki
-        ctx.fillRect(0, 15, 60, 50);
-        ctx.fillStyle = "#ffdbac"; // Face
-        ctx.beginPath(); ctx.arc(30, 5, 15, 0, Math.PI*2); ctx.fill();
-        ctx.fillStyle = "#654321"; // Police Cap
-        ctx.fillRect(12, -15, 36, 10);
-        // Lathi (Baton)
-        ctx.strokeStyle = "#8b5a2b"; ctx.lineWidth = 6;
-        ctx.beginPath(); ctx.moveTo(55, 10); ctx.lineTo(70, -15); ctx.stroke();
-        ctx.restore();
-    }
-};
+scene.add(copGroup);
+copGroup.position.z = 4; // Positioned behind the player trail
 
-// Spawn Lists
-let obstacles = [];
-let spawnableCoins = [];
+// --- CAMERA ATTACHMENT POSITION ---
+camera.position.set(0, 4.5, 7);
+camera.lookAt(0, 1.5, -5);
 
-// --- CLASSES FOR SPAWNABLES ---
+// --- PROCEDURAL GENERATORS (OBSTACLES & COINS) ---
 
-class Obstacle {
-    constructor() {
-        this.lane = Math.floor(Math.random() * 3);
-        this.x = lanes[this.lane];
-        this.y = -100;
-        this.type = Math.random() > 0.5 ? 'cow' : 'rickshaw';
-        this.width = this.type === 'cow' ? 80 : 70;
-        this.height = this.type === 'cow' ? 60 : 90;
-        this.passed = false;
+function spawnObstacle() {
+    const lane = Math.floor(Math.random() * 3);
+    const type = Math.random() > 0.4 ? 'rickshaw' : 'cow';
+    let mesh;
+
+    if (type === 'rickshaw') {
+        // Auto-Rickshaw shape
+        mesh = new THREE.Mesh(
+            new THREE.BoxGeometry(2, 2.5, 3.5),
+            new THREE.MeshStandardMaterial({ color: 0xff9933 }) // Bright Yellow-Green body
+        );
+        mesh.userData = { type: 'rickshaw', radius: 1.5 };
+    } else {
+        // Holy cow shape
+        mesh = new THREE.Mesh(
+            new THREE.BoxGeometry(2.2, 1.4, 2.5),
+            new THREE.MeshStandardMaterial({ color: 0xeeeeee }) // White Cow body
+        );
+        mesh.userData = { type: 'cow', radius: 1.2 };
     }
-    update() {
-        this.y += gameSpeed;
-    }
-    draw() {
-        ctx.save();
-        ctx.translate(this.x - this.width/2, this.y);
-        if (this.type === 'cow') {
-            // Draw Holy Cow
-            ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 20, this.width, this.height - 20);
-            ctx.fillStyle = "#ffcc00"; ctx.fillRect(10, 10, 15, 15); // Horns/Decorations
-            ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.arc(15,30, 15, 0, Math.PI*2); ctx.fill(); // Head
-        } else {
-            // Draw Auto-Rickshaw (Green and yellow)
-            ctx.fillStyle = "#138808"; ctx.fillRect(0, 30, this.width, this.height - 30); // Green bottom
-            ctx.fillStyle = "#ff9933"; ctx.fillRect(0, 0, this.width, 30); // Yellow top
-            ctx.fillStyle = "#000"; ctx.fillRect(10, 25, this.width - 20, 20); // Windshield
-        }
-        ctx.restore();
-    }
+
+    mesh.position.set(lanes[lane], mesh.geometry.parameters.height / 2, -120);
+    mesh.castShadow = true;
+    scene.add(mesh);
+    obstacles.push(mesh);
 }
 
-class Coin {
-    constructor(lane, yOffset) {
-        this.lane = lane;
-        this.x = lanes[this.lane];
-        this.y = yOffset;
-        this.radius = 12;
-    }
-    update() {
-        this.y += gameSpeed;
-    }
-    draw() {
-        ctx.save();
-        // Shiny gold star coin representation
-        ctx.fillStyle = "#ffd700";
-        ctx.strokeStyle = "#ff9900";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(this.x, this.y, this.radius, 0, Math.PI*2);
-        ctx.fill();
-        ctx.stroke();
-        ctx.restore();
-    }
-}
-
-// --- GAME LOOP & LOGIC ---
-
-function spawnLogic() {
-    // Spawn Obstacles
-    if (gameFrame % 120 === 0) {
-        obstacles.push(new Obstacle());
-    }
-    // Spawn Chains of Coins
-    if (gameFrame % 90 === 0) {
-        let coinLane = Math.floor(Math.random() * 3);
-        for(let i = 0; i < 4; i++) {
-            spawnableCoins.push(new Coin(coinLane, -40 - (i * 35)));
-        }
-    }
-}
-
-function handleCollisions() {
-    // Obstacle Collision
-    obstacles.forEach(obs => {
-        let obsLeft = obs.x - obs.width/2;
-        let obsRight = obs.x + obs.width/2;
-        
-        let pLeft = player.x;
-        let pRight = player.x + player.width;
-        
-        // AABB Collision bounds checking
-        if (pLeft < obsRight && pRight > obsLeft && 
-            player.y < obs.y + obs.height && player.y + player.height > obs.y) {
-            
-            // Special rule: You can jump over the Cow, but not the tall Rickshaw!
-            if (obs.type === 'cow' && player.jumpY > 30) {
-                // Safely jumped over!
-            } else {
-                gameOver();
-            }
-        }
-    });
-
-    // Coin Collection
-    spawnableCoins.forEach((coin, index) => {
-        let distY = Math.abs(coin.y - (player.y + player.height/2 - player.jumpY));
-        if (player.targetLane === coin.lane && distY < 40) {
-            coins++;
-            score += 50;
-            document.getElementById("coinBox").innerText = `🪙 Coins: ${coins}`;
-            spawnableCoins.splice(index, 1);
-        }
-    });
-}
-
-function drawBackground() {
-    // Ground / Street
-    ctx.fillStyle = "#555";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+function spawnCoinRow() {
+    const lane = Math.floor(Math.random() * 3);
+    const startZ = -120;
     
-    // Lane lines
-    ctx.strokeStyle = "#fff";
-    ctx.lineWidth = 5;
-    ctx.setLineDash([20, 20]);
-    ctx.beginPath();
-    ctx.moveTo(275, 0); ctx.lineTo(275, canvas.height);
-    ctx.moveTo(525, 0); ctx.lineTo(525, canvas.height);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    // Decorative Environment Context (Chai Tapri on Right, Shop Text area on Left)
-    ctx.fillStyle = "#8b5a2b"; 
-    ctx.fillRect(720, 200, 80, 150); // Chai Stall structure
-    ctx.fillStyle = "#ff9933"; ctx.font = "14px Arial";
-    ctx.fillText("CHAI TAPRI", 725, 220);
-
-    ctx.fillStyle = "#990000"; ctx.fillRect(0, 100, 80, 120); // Left Shop
-    ctx.fillStyle = "#fff"; ctx.font = "bold 16px Arial";
-    ctx.fillText("राजू स्टोर", 10, 130); // Hindi Shop Sign placeholder
+    for(let i = 0; i < 5; i++) {
+        const coinGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.1, 16);
+        const coinMat = new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 0.8, roughness: 0.2 });
+        const coin = new THREE.Mesh(coinGeo, coinMat);
+        coin.rotation.x = Math.PI / 2; // Face forward towards player
+        coin.position.set(lanes[lane], 0.8, startZ - (i * 3));
+        scene.add(coin);
+        coinPickups.push(coin);
+    }
 }
 
-function updateGame() {
-    if (isGameOver) return;
-
-    gameFrame++;
-    score += 1; // Passive score generation
-    document.getElementById("scoreBox").innerText = `Score: ${score}`;
-    
-    // Gradually speed up the game
-    if (gameFrame % 500 === 0) gameSpeed += 0.5;
-
-    ctx.clearRect(0,0, canvas.width, canvas.height);
-
-    drawBackground();
-    spawnLogic();
-
-    // Update & Draw Obstacles
-    obstacles.forEach((obs, index) => {
-        obs.update();
-        obs.draw();
-        if (obs.y > canvas.height) obstacles.splice(index, 1);
-    });
-
-    // Update & Draw Coins
-    spawnableCoins.forEach((coin, index) => {
-        coin.update();
-        coin.draw();
-        if (coin.y > canvas.height) spawnableCoins.splice(index, 1);
-    });
-
-    // Handle character physics
-    player.update();
-    player.draw();
-    police.draw();
-
-    handleCollisions();
-
-    requestAnimationFrame(updateGame);
-}
-
-function gameOver() {
-    isGameOver = true;
-    document.getElementById("gameOverScreen").style.display = "flex";
-    document.getElementById("finalScore").innerText = `You ran away with ${coins} coins and a score of ${score}!`;
-}
-
-function resetGame() {
-    obstacles = [];
-    spawnableCoins = [];
-    score = 0;
-    coins = 0;
-    gameSpeed = 5;
-    gameFrame = 0;
-    player.targetLane = 1;
-    player.x = lanes[1] - player.width/2;
-    isGameOver = false;
-    document.getElementById("coinBox").innerText = `🪙 Coins: 0`;
-    document.getElementById("gameOverScreen").style.display = "none";
-    updateGame();
-}
-
-// --- INPUT HANDLERS ---
-window.addEventListener("keydown", (e) => {
+// --- CONTROLS INPUT ---
+window.addEventListener('keydown', (e) => {
     if (isGameOver) return;
     
-    if ((e.key === "ArrowLeft" || e.key.toLowerCase() === "a") && player.targetLane > 0) {
-        player.targetLane--;
+    if ((e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') && playerState.currentLane > 0) {
+        playerState.currentLane--;
     }
-    if ((e.key === "ArrowRight" || e.key.toLowerCase() === "d") && player.targetLane < 2) {
-        player.targetLane++;
+    if ((e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') && playerState.currentLane < 2) {
+        playerState.currentLane++;
     }
-    if ((e.key === "ArrowUp" || e.key.toLowerCase() === "w") && !player.isJumping) {
-        player.isJumping = true;
-        player.jumpVelocity = 12; // Start jump power
+    if ((e.key === 'ArrowUp' || e.key.toLowerCase() === 'w') && !playerState.isJumping) {
+        playerState.isJumping = true;
+        playerState.jumpVelocity = 0.33;
     }
 });
 
-// Start the game loop on load
-updateGame();
+// --- MAIN LOOP ---
+let frameCount = 0;
+
+function animate() {
+    if (isGameOver) return;
+    requestAnimationFrame(animate);
+
+    frameCount++;
+    score += 1;
+    document.getElementById('score-card').innerText = `SCORE: ${score}`;
+
+    // Speed scaling
+    if (frameCount % 500 === 0) gameSpeed += 0.05;
+
+    // Spawning cadence
+    if (frameCount % 90 === 0) spawnObstacle();
+    if (frameCount % 130 === 0) spawnCoinRow();
+
+    // 1. Handle Player Position & Jump Mechanics
+    playerState.targetX = lanes[playerState.currentLane];
+    playerGroup.position.x += (playerState.targetX - playerGroup.position.x) * 0.25; // Smooth slide interpolation
+
+    if (playerState.isJumping) {
+        playerState.jumpVelocity += playerState.gravity;
+        playerState.yPos += playerState.jumpVelocity;
+        if (playerState.yPos <= 0) {
+            playerState.yPos = 0;
+            playerState.isJumping = false;
+        }
+    }
+    playerGroup.position.y = playerState.yPos;
+
+    // Running bounce look animation
+    if (!playerState.isJumping) {
+        playerGroup.position.y = Math.abs(Math.sin(frameCount * 0.2)) * 0.15;
+        leftLeg.rotation.x = Math.sin(frameCount * 0.2) * 0.6;
+        rightLeg.rotation.x = -Math.sin(frameCount * 0.2) * 0.6;
+    }
+
+    // Cop movement follows lagging behind player
+    copGroup.position.x += (playerGroup.position.x - copGroup.position.x) * 0.04;
+
+    // 2. Process Obstacles Movement & Collision
+    for (let i = obstacles.length - 1; i >= 0; i--) {
+        const obs = obstacles[i];
+        obs.position.z += gameSpeed;
+
+        // Collision Check (Bounding Sphere approximation logic)
+        const pDistZ = Math.abs(obs.position.z - playerGroup.position.z);
+        const pDistX = Math.abs(obs.position.x - playerGroup.position.x);
+
+        if (pDistZ < obs.userData.radius && pDistX < 1.2) {
+            // High Jump Check: Cows can be cleared via jumping, Auto-Rickshaws cannot!
+            if (obs.userData.type === 'cow' && playerGroup.position.y > 1.1) {
+                // Safely sailed over the sleeping cow
+            } else {
+                triggerGameOver();
+                return;
+            }
+        }
+
+        // Clean up out of bounds objects
+        if (obs.position.z > 15) {
+            scene.remove(obs);
+            obstacles.splice(i, 1);
+        }
+    }
+
+    // 3. Process Gold Coins & Rotation
+    for (let i = coinPickups.length - 1; i >= 0; i--) {
+        const coin = coinPickups[i];
+        coin.position.z += gameSpeed;
+        coin.rotation.z += 0.05; // Spin visual effect
+
+        // Collection registration
+        const cDistZ = Math.abs(coin.position.z - playerGroup.position.z);
+        const cDistX = Math.abs(coin.position.x - playerGroup.position.x);
+        const cDistY = Math.abs(coin.position.y - playerGroup.position.y);
+
+        if (cDistZ < 0.8 && cDistX < 1.0 && cDistY < 1.5) {
+            coins++;
+            score += 100;
+            document.getElementById('coin-card').innerText = `🪙 COINS: ${coins}`;
+            scene.remove(coin);
+            coinPickups.splice(i, 1);
+            continue;
+        }
+
+        if (coin.position.z > 15) {
+            scene.remove(coin);
+            coinPickups.splice(i, 1);
+        }
+    }
+
+    // 4. Recycle Environment / Move Buildings backward to look endless
+    backgroundScenery.forEach(asset => {
+        asset.position.z += gameSpeed;
+        if (asset.position.z > 20) {
+            asset.position.z = -480; // Loop around to the back horizon
+        }
+    });
+
+    renderer.render(scene, camera);
+}
+
+// --- GAME LIFECYCLE MANAGEMENT ---
+function triggerGameOver() {
+    isGameOver = true;
+    document.getElementById('game-over-screen').style.display = 'flex';
+    document.getElementById('final-stats').innerText = `You dodged and rushed for a score of ${score} while snatching up ${coins} gold coins!`;
+}
+
+function resetGame() {
+    // Purge elements from world scene
+    obstacles.forEach(o => scene.remove(o));
+    coinPickups.forEach(c => scene.remove(c));
+    
+    obstacles = [];
+    coinPickups = [];
+    score = 0;
+    coins = 0;
+    gameSpeed = 0.8;
+    frameCount = 0;
+    
+    playerState.currentLane = 1;
+    playerGroup.position.set(lanes[1], 0, 0);
+    copGroup.position.set(lanes[1], 0, 4);
+
+    document.getElementById('coin-card').innerText = `🪙 COINS: 0`;
+    document.getElementById('game-over-screen').style.display = 'none';
+    
+    isGameOver = false;
+    animate();
+}
+
+// Handle layout restructuring on screen scale changes
+window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// Kick off engine loop
+animate();
 </script>
 </body>
 </html>
